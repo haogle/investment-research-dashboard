@@ -3,4 +3,3 @@ __pycache__/
 *.png
 *.bin
 .DS_Store
-.streamlit/
