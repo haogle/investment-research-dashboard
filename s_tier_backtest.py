@@ -25,6 +25,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.gridspec as gridspec
 from datetime import datetime, timedelta
+from price_cache import fetch_prices_cached_raw
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -677,27 +678,9 @@ for fund_snaps in FUNDS.values():
 all_tickers.add(BENCHMARK)
 
 print(f"Fetching prices for {len(all_tickers)} tickers: {sorted(all_tickers)}")
-print("(~20-30 seconds…)\n")
+print("(using local cache, 7-day TTL…)\n")
 
-raw = yf.download(
-    list(all_tickers),
-    start="2022-01-01",
-    end="2026-03-11",
-    auto_adjust=True,
-    progress=False,
-)
-
-prices = {}
-for ticker in all_tickers:
-    try:
-        if isinstance(raw.columns, pd.MultiIndex):
-            df = raw["Close"][[ticker]].rename(columns={ticker: "Close"}).dropna()
-        else:
-            df = raw[["Close"]].dropna()
-        df.index = df.index.strftime("%Y-%m-%d")
-        prices[ticker] = df
-    except Exception:
-        print(f"  ⚠  Could not load {ticker}")
+prices = fetch_prices_cached_raw(list(all_tickers), start="2022-01-01", end="2026-03-11")
 
 print(f"Loaded {len(prices)} tickers.\n")
 

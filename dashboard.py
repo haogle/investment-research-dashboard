@@ -11,6 +11,7 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import yfinance as yf
 from datetime import datetime
+from price_cache import fetch_prices_cached, refresh_cache
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -24,6 +25,12 @@ with st.sidebar:
     starting_capital = st.number_input("Starting Capital ($)", value=100_000, step=10_000, min_value=1000)
     benchmark = st.selectbox("Benchmark", ["SPY","QQQ","IWM","VTI"], index=0)
     st.markdown("---")
+    if st.button("🔄 Refresh Price Cache"):
+        from price_cache import clear_cache
+        clear_cache()
+        st.cache_data.clear()
+        st.success("Cache cleared! Prices will re-fetch on next load.")
+    st.caption("Data cached locally (7-day TTL)")
     st.caption("Data: Yahoo Finance | For research only")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -47,19 +54,8 @@ def normalize_weights(snap):
     return {k: v/total for k,v in snap.items()}
 
 def fetch_prices(tickers, start="2022-01-01", end="2026-03-12"):
-    """Fetch prices, return dict of {ticker: pd.Series with DatetimeIndex}."""
-    raw = yf.download(list(set(tickers)), start=start, end=end,
-                      auto_adjust=True, progress=False)
-    out = {}
-    for t in tickers:
-        try:
-            s = raw["Close"][t].dropna() if isinstance(raw.columns, pd.MultiIndex) else raw["Close"].dropna()
-            if len(s) > 0:
-                s.index = pd.to_datetime(s.index)
-                out[t] = s
-        except Exception:
-            pass
-    return out
+    """Fetch prices with local JSON cache (7-day TTL)."""
+    return fetch_prices_cached(tickers, start=start, end=end)
 
 def get_px(ticker, date, prices):
     """Get price on or before date. date can be str or Timestamp."""
@@ -414,16 +410,14 @@ with tab3:
     if t_list:
         @st.cache_data(show_spinner="Loading…", ttl=300)
         def fetch_research(tickers, per):
-            raw = yf.download(tickers, period=per, auto_adjust=True, progress=False)
-            out = {}
-            for t in tickers:
-                try:
-                    s = raw["Close"][t].dropna() if isinstance(raw.columns, pd.MultiIndex) else raw["Close"].dropna()
-                    s.index = pd.to_datetime(s.index)
-                    out[t] = s
-                except Exception:
-                    pass
-            return out
+            # period-based lookups: convert to start/end dates for cache
+            from datetime import timedelta
+            period_map = {"6mo": 180, "1y": 365, "2y": 730, "3y": 1095, "5y": 1825}
+            days = period_map.get(per, 365)
+            end_dt = datetime.today()
+            start_dt = end_dt - timedelta(days=days)
+            return fetch_prices(tickers, start=start_dt.strftime("%Y-%m-%d"),
+                                end=end_dt.strftime("%Y-%m-%d"))
 
         res_px = fetch_research(t_list, period)
         fig_p  = go.Figure()
@@ -433,6 +427,10 @@ with tab3:
             elif chart_type == "Area":
                 fig_p.add_trace(go.Scatter(x=s.index, y=s, name=t, fill="tozeroy"))
             elif chart_type == "Candlestick" and len(t_list)==1:
+                # Candlestick needs OHLC — fall back to yfinance for this specific case
+                from datetime import timedelta
+                period_map = {"6mo": 180, "1y": 365, "2y": 730, "3y": 1095, "5y": 1825}
+                days = period_map.get(period, 365)
                 raw2 = yf.download(t_list[0], period=period, auto_adjust=True, progress=False)
                 raw2.index = pd.to_datetime(raw2.index)
                 fig_p.add_trace(go.Candlestick(x=raw2.index,open=raw2["Open"],
