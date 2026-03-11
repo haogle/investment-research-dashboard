@@ -9,9 +9,8 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
-import yfinance as yf
 from datetime import datetime
-from price_cache import fetch_prices_cached, refresh_cache
+from price_cache import fetch_prices_cached, refresh_cache, fetch_ohlc_cached, fetch_ticker_info_cached
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -427,14 +426,16 @@ with tab3:
             elif chart_type == "Area":
                 fig_p.add_trace(go.Scatter(x=s.index, y=s, name=t, fill="tozeroy"))
             elif chart_type == "Candlestick" and len(t_list)==1:
-                # Candlestick needs OHLC — fall back to yfinance for this specific case
                 from datetime import timedelta
                 period_map = {"6mo": 180, "1y": 365, "2y": 730, "3y": 1095, "5y": 1825}
                 days = period_map.get(period, 365)
-                raw2 = yf.download(t_list[0], period=period, auto_adjust=True, progress=False)
-                raw2.index = pd.to_datetime(raw2.index)
-                fig_p.add_trace(go.Candlestick(x=raw2.index,open=raw2["Open"],
-                    high=raw2["High"],low=raw2["Low"],close=raw2["Close"],name=t))
+                end_dt = datetime.today()
+                start_dt = end_dt - timedelta(days=days)
+                raw2 = fetch_ohlc_cached(t_list[0], start_dt.strftime("%Y-%m-%d"),
+                                         end_dt.strftime("%Y-%m-%d"))
+                if not raw2.empty:
+                    fig_p.add_trace(go.Candlestick(x=raw2.index,open=raw2["Open"],
+                        high=raw2["High"],low=raw2["Low"],close=raw2["Close"],name=t))
         fig_p.update_layout(template="plotly_dark", height=420,
                             title=f"Price — {', '.join(t_list)}", yaxis_tickprefix="$")
         st.plotly_chart(fig_p, use_container_width=True)
@@ -453,7 +454,7 @@ with tab3:
         for i, t in enumerate(t_list):
             with scols[i]:
                 try:
-                    info = yf.Ticker(t).info
+                    info = fetch_ticker_info_cached(t)
                     st.markdown(f"**{t} — {info.get('shortName','')[:25]}**")
                     for k,v in {
                         "Price": f"${info.get('currentPrice', info.get('regularMarketPrice','N/A'))}",

@@ -124,3 +124,79 @@ def refresh_cache(tickers, start="2022-01-01", end="2026-03-12"):
     if os.path.exists(path):
         os.remove(path)
     return fetch_prices_cached(tickers, start, end)
+
+
+# ═══════════════════════════════════════════════════════════════
+# OHLC CACHE — for candlestick charts
+# ═══════════════════════════════════════════════════════════════
+
+def fetch_ohlc_cached(ticker, start, end):
+    """
+    Fetch OHLC data for a single ticker. Returns DataFrame with
+    Open/High/Low/Close columns and DatetimeIndex.
+    """
+    key = "ohlc_" + hashlib.md5(f"{ticker}|{start}|{end}".encode()).hexdigest()
+
+    cached_data, hit = _read_cache(key)
+    if hit:
+        df = pd.DataFrame(cached_data["rows"], index=pd.to_datetime(cached_data["dates"]))
+        return df
+
+    raw = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False)
+    raw.index = pd.to_datetime(raw.index)
+    if raw.empty:
+        return raw
+
+    cols = ["Open", "High", "Low", "Close"]
+    # Handle MultiIndex columns from yfinance
+    if isinstance(raw.columns, pd.MultiIndex):
+        df = raw.droplevel(1, axis=1)[cols]
+    else:
+        df = raw[cols]
+
+    to_cache = {
+        "dates": [d.strftime("%Y-%m-%d") for d in df.index],
+        "rows": {col: [float(v) for v in df[col].values] for col in cols},
+    }
+    _write_cache(key, to_cache)
+    return df
+
+
+# ═══════════════════════════════════════════════════════════════
+# TICKER INFO CACHE — for stock stats (P/E, market cap, etc.)
+# ═══════════════════════════════════════════════════════════════
+
+TICKER_INFO_TTL = 24 * 3600  # 1 day for info (changes more frequently)
+
+def fetch_ticker_info_cached(ticker):
+    """
+    Fetch yf.Ticker(ticker).info with 1-day cache.
+    Returns dict of info fields.
+    """
+    key = "info_" + hashlib.md5(ticker.encode()).hexdigest()
+
+    # Use shorter TTL for info
+    path = _cache_path(key)
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                payload = json.load(f)
+            if time.time() - payload.get("ts", 0) <= TICKER_INFO_TTL:
+                return payload["data"]
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    info = yf.Ticker(ticker).info
+
+    # Filter to JSON-serializable fields we actually use
+    safe_info = {}
+    for k, v in info.items():
+        if isinstance(v, (str, int, float, bool, type(None))):
+            safe_info[k] = v
+
+    _ensure_cache_dir()
+    payload = {"ts": time.time(), "data": safe_info}
+    with open(path, "w") as f:
+        json.dump(payload, f)
+
+    return safe_info
