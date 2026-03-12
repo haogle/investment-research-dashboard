@@ -9,26 +9,141 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
-from datetime import datetime
-from price_cache import fetch_prices_cached, refresh_cache, fetch_ohlc_cached, fetch_ticker_info_cached
+from datetime import datetime, timedelta
+from price_cache import fetch_prices_cached, fetch_ohlc_cached, fetch_ticker_info_cached, clear_cache
 import warnings
 warnings.filterwarnings("ignore")
 
 st.set_page_config(page_title="Investment Research Dashboard",
                    page_icon="📊", layout="wide")
 
+# ─────────────────────────────────────────────────────────────
+# DATA DEFINITIONS (moved to top so master fetch can collect all tickers)
+# ─────────────────────────────────────────────────────────────
+FUND_DATA = {
+    "Himalaya Capital (Li Lu)": {
+        "2022-05-16": {"MU":0.5117,"BAC":0.2417,"GOOG":0.0898,"META":0.0853,"AAPL":0.0469,"BRK-B":0.0246},
+        "2022-08-15": {"MU":0.4200,"BAC":0.2300,"GOOG":0.1400,"GOOGL":0.0900,"AAPL":0.0500,"BRK-B":0.0700},
+        "2022-11-14": {"MU":0.4000,"BAC":0.2200,"GOOG":0.1400,"GOOGL":0.1000,"AAPL":0.0600,"BRK-B":0.0800},
+        "2023-02-14": {"MU":0.2500,"BAC":0.1900,"GOOGL":0.2400,"GOOG":0.1700,"AAPL":0.0600,"BRK-B":0.0900},
+        "2023-05-15": {"BAC":0.2900,"GOOGL":0.2300,"GOOG":0.1700,"MU":0.1400,"EWBC":0.0800,"BRK-B":0.0500,"AAPL":0.0400},
+        "2023-08-14": {"BAC":0.3000,"GOOGL":0.2500,"GOOG":0.1800,"EWBC":0.1300,"BRK-B":0.0700,"AAPL":0.0700},
+        "2023-11-14": {"BAC":0.3000,"GOOGL":0.2500,"GOOG":0.1800,"EWBC":0.1300,"BRK-B":0.0700,"AAPL":0.0700},
+        "2024-02-14": {"BAC":0.3000,"GOOGL":0.2500,"GOOG":0.1800,"EWBC":0.1200,"BRK-B":0.0800,"AAPL":0.0700},
+        "2024-05-15": {"BAC":0.3000,"GOOGL":0.2500,"GOOG":0.1700,"EWBC":0.1200,"BRK-B":0.0800,"AAPL":0.0800},
+        "2024-08-14": {"BAC":0.2800,"GOOGL":0.2200,"GOOG":0.1600,"EWBC":0.1100,"BRK-B":0.0900,"OXY":0.0700,"AAPL":0.0700},
+        "2024-11-14": {"BAC":0.2800,"GOOGL":0.2200,"GOOG":0.1600,"EWBC":0.1100,"BRK-B":0.0900,"OXY":0.0700,"AAPL":0.0700},
+        "2025-02-14": {"BAC":0.2800,"GOOGL":0.2200,"GOOG":0.1600,"EWBC":0.1100,"BRK-B":0.0900,"OXY":0.0700,"AAPL":0.0700},
+        "2025-05-15": {"GOOGL":0.2400,"GOOG":0.2000,"BAC":0.1800,"PDD":0.1500,"BRK-B":0.1000,"EWBC":0.0900,"OXY":0.0500,"AAPL":0.0400},
+        "2025-08-14": {"GOOGL":0.2400,"GOOG":0.1600,"BAC":0.1400,"PDD":0.1800,"BRK-B":0.1100,"EWBC":0.1000,"OXY":0.0500,"AAPL":0.0200},
+        "2025-11-12": {"GOOGL":0.2331,"GOOG":0.2155,"BAC":0.1608,"PDD":0.1464,"BRK-B":0.1264,"EWBC":0.0874,"OXY":0.0169,"AAPL":0.0084,"SOC":0.0050},
+        "2026-02-18": {"GOOGL":0.2231,"GOOG":0.2155,"BAC":0.1608,"PDD":0.1464,"BRK-B":0.1264,"EWBC":0.0874,"OXY":0.0169,"CROX":0.0151,"AAPL":0.0084},
+    },
+    "Pershing Square (Ackman)": {
+        "2022-05-16": {"LOW":0.2600,"CMG":0.1900,"QSR":0.1600,"HLT":0.1500,"CP":0.1100,"GOOG":0.0400,"HHH":0.0500,"AAPL":0.0400},
+        "2022-08-15": {"LOW":0.2700,"CMG":0.2000,"QSR":0.1800,"HLT":0.1400,"CP":0.1100,"GOOG":0.0600,"HHH":0.0400},
+        "2022-11-14": {"LOW":0.2400,"CMG":0.1900,"QSR":0.1700,"HLT":0.1300,"CP":0.1000,"GOOG":0.0900,"GOOGL":0.0400,"HHH":0.0400},
+        "2023-02-14": {"LOW":0.2300,"CMG":0.2000,"QSR":0.1700,"HLT":0.1200,"CP":0.1100,"GOOG":0.1000,"GOOGL":0.0500,"HHH":0.0200},
+        "2023-05-15": {"CMG":0.2500,"QSR":0.2000,"HLT":0.1500,"GOOG":0.1500,"GOOGL":0.1000,"CP":0.1100,"HHH":0.0400},
+        "2023-08-14": {"CMG":0.2400,"QSR":0.1900,"HLT":0.1400,"GOOG":0.1600,"GOOGL":0.1100,"CP":0.1200,"HHH":0.0400},
+        "2023-11-14": {"CMG":0.2200,"QSR":0.1800,"GOOG":0.1500,"GOOGL":0.1300,"HLT":0.1200,"CP":0.1100,"UBER":0.0500,"HHH":0.0400},
+        "2024-02-14": {"CMG":0.2000,"QSR":0.1700,"GOOG":0.1500,"GOOGL":0.1300,"HLT":0.1200,"CP":0.1148,"UBER":0.0800,"HHH":0.0352},
+        "2024-05-15": {"QSR":0.1800,"GOOG":0.1700,"GOOGL":0.1400,"HLT":0.1300,"UBER":0.1500,"BN":0.1400,"CP":0.0900,"HHH":0.0200},
+        "2024-08-14": {"BN":0.1900,"UBER":0.1800,"QSR":0.1600,"GOOG":0.1500,"GOOGL":0.1200,"HLT":0.1100,"CP":0.0900,"HHH":0.0500},
+        "2024-11-14": {"UBER":0.2030,"BN":0.1920,"HHH":0.1060,"GOOG":0.1050,"QSR":0.1000,"AMZN":0.0870,"GOOGL":0.0800,"HLT":0.0540,"CP":0.0580,"SEG":0.0080,"HTZ":0.0070},
+        "2025-02-14": {"UBER":0.2100,"BN":0.2000,"GOOG":0.1300,"GOOGL":0.1200,"QSR":0.1100,"AMZN":0.1000,"HLT":0.0700,"HHH":0.0800,"SEG":0.0080,"HTZ":0.0070},
+        "2025-05-15": {"UBER":0.2000,"BN":0.1900,"AMZN":0.1400,"GOOG":0.1300,"GOOGL":0.1000,"QSR":0.1000,"HLT":0.0600,"HHH":0.0800},
+        "2025-08-14": {"UBER":0.2030,"BN":0.1920,"GOOG":0.1050,"QSR":0.1000,"AMZN":0.0870,"GOOGL":0.0800,"HHH":0.1060,"HLT":0.0540,"SEG":0.0080,"HTZ":0.0070,"CMG":0.0580},
+        "2025-11-14": {"UBER":0.2030,"BN":0.1920,"HHH":0.1060,"GOOG":0.1050,"QSR":0.1000,"AMZN":0.0870,"GOOGL":0.0800,"HLT":0.0540,"SEG":0.0080,"HTZ":0.0070},
+        "2026-02-17": {"BN":0.1815,"UBER":0.1590,"AMZN":0.1428,"GOOG":0.1246,"META":0.1137,"QSR":0.1005,"HHH":0.0969,"HLT":0.0560,"GOOGL":0.0137,"SEG":0.0064,"HTZ":0.0050},
+    },
+    "Berkshire Hathaway (Buffett)": {
+        "2022-05-16": {"AAPL":0.3800,"BAC":0.1400,"AXP":0.0800,"KO":0.0750,"CVX":0.0900,"OXY":0.0400,"KHC":0.0350,"MCO":0.0300,"USB":0.0200,"VRSN":0.0100},
+        "2022-08-15": {"AAPL":0.3800,"BAC":0.1400,"AXP":0.0800,"KO":0.0750,"CVX":0.0900,"OXY":0.0500,"KHC":0.0350,"MCO":0.0300},
+        "2022-11-14": {"AAPL":0.3900,"BAC":0.1300,"AXP":0.0800,"KO":0.0760,"CVX":0.0900,"OXY":0.0600,"KHC":0.0330,"MCO":0.0300},
+        "2023-02-14": {"AAPL":0.3800,"BAC":0.1300,"AXP":0.0790,"KO":0.0760,"CVX":0.0900,"OXY":0.0430,"KHC":0.0330,"MCO":0.0300},
+        "2023-05-15": {"AAPL":0.4644,"BAC":0.0909,"AXP":0.0769,"KO":0.0763,"CVX":0.0665,"OXY":0.0400,"KHC":0.0280,"MCO":0.0260},
+        "2023-08-14": {"AAPL":0.4800,"BAC":0.0900,"AXP":0.0750,"KO":0.0750,"CVX":0.0600,"OXY":0.0400,"KHC":0.0280,"MCO":0.0270},
+        "2023-11-14": {"AAPL":0.4800,"BAC":0.0900,"AXP":0.0780,"KO":0.0720,"CVX":0.0570,"OXY":0.0450,"KHC":0.0280,"MCO":0.0280,"CB":0.0120},
+        "2024-02-14": {"AAPL":0.4954,"BAC":0.0988,"AXP":0.0807,"KO":0.0670,"CVX":0.0534,"OXY":0.0450,"MCO":0.0320,"KHC":0.0280,"CB":0.0200},
+        "2024-05-15": {"AAPL":0.4100,"BAC":0.1000,"AXP":0.0820,"KO":0.0680,"CVX":0.0540,"OXY":0.0500,"CB":0.0600,"MCO":0.0330,"KHC":0.0280},
+        "2024-08-14": {"AAPL":0.3000,"BAC":0.1000,"AXP":0.0820,"KO":0.0700,"CVX":0.0550,"OXY":0.0510,"CB":0.0600,"MCO":0.0340,"KHC":0.0280},
+        "2024-11-14": {"AAPL":0.2600,"AXP":0.1500,"KO":0.1100,"BAC":0.1000,"CVX":0.0800,"OXY":0.0600,"CB":0.0500,"MCO":0.0380,"KHC":0.0280,"GOOGL":0.0240},
+        "2025-02-14": {"AAPL":0.2500,"AXP":0.1700,"KO":0.1100,"BAC":0.1000,"CVX":0.0800,"OXY":0.0600,"CB":0.0500,"MCO":0.0380,"GOOGL":0.0240,"KHC":0.0280},
+        "2025-05-15": {"AAPL":0.2400,"AXP":0.1800,"KO":0.1100,"BAC":0.0900,"CVX":0.0800,"OXY":0.0600,"CB":0.0500,"MCO":0.0380,"GOOGL":0.0240,"KHC":0.0280},
+        "2025-08-14": {"AAPL":0.2300,"AXP":0.1900,"KO":0.1150,"BAC":0.0950,"CVX":0.0800,"OXY":0.0580,"CB":0.0500,"MCO":0.0380,"GOOGL":0.0240,"KHC":0.0200},
+        "2025-11-14": {"AAPL":0.2300,"AXP":0.2046,"KO":0.1020,"BAC":0.1038,"CVX":0.0724,"OXY":0.0525,"MCO":0.0416,"CB":0.0416,"KHC":0.0288,"GOOGL":0.0204},
+        "2026-02-17": {"AAPL":0.2218,"AXP":0.1715,"KO":0.1163,"BAC":0.0937,"CVX":0.0905,"OXY":0.0525,"MCO":0.0416,"CB":0.0416,"KHC":0.0288,"GOOGL":0.0204},
+    },
+    "Pabrai Funds (Pabrai)": {
+        "2022-05-16": {"TDW":0.4000,"NVR":0.2500,"CEIX":0.2000,"ATIF":0.1500},
+        "2022-08-15": {"TDW":0.4500,"CEIX":0.2500,"NVR":0.2000,"ATIF":0.1000},
+        "2022-11-14": {"TDW":0.4500,"CEIX":0.3000,"NVR":0.1500,"ATIF":0.1000},
+        "2023-02-14": {"TDW":0.3500,"CEIX":0.3000,"HCC":0.1500,"NVR":0.1000,"AMR":0.0500},
+        "2023-05-15": {"TDW":0.2800,"CEIX":0.2500,"HCC":0.2000,"AMR":0.1500,"NVR":0.1200},
+        "2023-08-14": {"HCC":0.3500,"AMR":0.3000,"TDW":0.1500,"NE":0.1000,"NVR":0.1000},
+        "2023-11-14": {"HCC":0.3500,"AMR":0.3000,"TDW":0.1200,"NE":0.1200,"NVR":0.1100},
+        "2024-02-14": {"HCC":0.4000,"AMR":0.3000,"TDW":0.1000,"NE":0.1200,"NVR":0.0800},
+        "2024-05-15": {"HCC":0.3200,"AMR":0.3100,"RIG":0.1500,"NE":0.1200,"TDW":0.1000},
+        "2024-08-14": {"HCC":0.3500,"AMR":0.3000,"RIG":0.1500,"NE":0.1000,"VAL":0.1000},
+        "2024-11-14": {"HCC":0.3800,"AMR":0.2800,"RIG":0.1600,"NE":0.1100,"VAL":0.0700},
+        "2025-02-14": {"HCC":0.4000,"AMR":0.3000,"RIG":0.2000,"VAL":0.1000},
+        "2025-05-15": {"HCC":0.4000,"AMR":0.3000,"RIG":0.2000,"VAL":0.1000},
+        "2025-08-14": {"HCC":0.4000,"AMR":0.2900,"RIG":0.2100,"VAL":0.1000},
+        "2025-11-13": {"HCC":0.3500,"AMR":0.2800,"RIG":0.2100,"VAL":0.1000,"NE":0.0600},
+        "2026-02-13": {"HCC":0.3947,"RIG":0.2778,"AMR":0.2700,"VAL":0.0576},
+    },
+}
+
+SA_PICKS = {
+    2022: ["XOM","CI","FNF","BAC","BNTX","LYG"],
+    2023: ["SMCI","MOD","PDD","MNSO","JXN","ASC","VLO","HDSN","ENGIY"],
+    2024: ["APP","CLS","ANF","RYCEY","MOD","META","GCT","MHO","ISNPY","LPG"],
+    2025: ["CLS","OPFI","AGX","EAT","GCT","CRDO","NBIS","WLDN","DXPE","PTGX"],
+    2026: ["CLS","MU","AMD","CIEN","COHR","ALL","INCY","B","WLDN","ATI"],
+}
+
+YEAR_ENDS = {2022:"2022-12-30",2023:"2023-12-29",2024:"2024-12-31",
+             2025:"2025-12-31",2026:"2026-03-11"}
+
+DEFAULT_RESEARCH = ["AAPL", "NVDA", "MSFT"]
+BENCHMARKS = ["SPY", "QQQ", "IWM", "VTI"]
+
+# ─────────────────────────────────────────────────────────────
+# ONE MASTER FETCH — all tickers, one cache key, one roundtrip
+# ─────────────────────────────────────────────────────────────
+def _collect_all_tickers():
+    tickers = set(BENCHMARKS)
+    for snaps in FUND_DATA.values():
+        for s in snaps.values():
+            tickers.update(s.keys())
+    for picks in SA_PICKS.values():
+        tickers.update(picks)
+    tickers.update(DEFAULT_RESEARCH)
+    return list(tickers)
+
+@st.cache_resource(show_spinner="Loading price data…")
+def load_all_prices():
+    """Single fetch for ALL tickers across all tabs. Cached in memory."""
+    tickers = _collect_all_tickers()
+    return fetch_prices_cached(tickers, start="2022-01-01", end="2026-12-31")
+
+ALL_PRICES = load_all_prices()
+
+# ─────────────────────────────────────────────────────────────
+# SHARED UTILITY
+# ─────────────────────────────────────────────────────────────
 st.title("📊 Investment Research Dashboard")
 
 with st.sidebar:
     st.header("⚙️ Settings")
     starting_capital = st.number_input("Starting Capital ($)", value=100_000, step=10_000, min_value=1000)
-    benchmark = st.selectbox("Benchmark", ["SPY","QQQ","IWM","VTI"], index=0)
+    benchmark = st.selectbox("Benchmark", BENCHMARKS, index=0)
     st.markdown("---")
     if st.button("🔄 Refresh Price Cache"):
-        from price_cache import clear_cache
         clear_cache()
-        st.cache_data.clear()
-        st.success("Cache cleared! Prices will re-fetch on next load.")
+        st.cache_resource.clear()
+        st.rerun()
     st.caption("Data cached locally (7-day TTL)")
     st.caption("Data: Yahoo Finance | For research only")
 
@@ -40,9 +155,6 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📁 Upload Data",
 ])
 
-# ─────────────────────────────────────────────────────────────
-# SHARED UTILITY
-# ─────────────────────────────────────────────────────────────
 def hex_to_rgba(hex_color, alpha=0.15):
     h = hex_color.lstrip("#")
     r, g, b = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
@@ -51,10 +163,6 @@ def hex_to_rgba(hex_color, alpha=0.15):
 def normalize_weights(snap):
     total = sum(snap.values())
     return {k: v/total for k,v in snap.items()}
-
-def fetch_prices(tickers, start="2022-01-01", end="2026-03-12"):
-    """Fetch prices with local JSON cache (7-day TTL)."""
-    return fetch_prices_cached(tickers, start=start, end=end)
 
 def get_px(ticker, date, prices):
     """Get price on or before date. date can be str or Timestamp."""
@@ -73,81 +181,6 @@ with tab1:
     st.header("13F Copy-Trade Simulator")
     st.caption("Rebalances to each fund's 13F weights on the filing release date (~45 days after quarter end).")
 
-    FUND_DATA = {
-        "Himalaya Capital (Li Lu)": {
-            "2022-05-16": {"MU":0.5117,"BAC":0.2417,"GOOG":0.0898,"META":0.0853,"AAPL":0.0469,"BRK-B":0.0246},
-            "2022-08-15": {"MU":0.4200,"BAC":0.2300,"GOOG":0.1400,"GOOGL":0.0900,"AAPL":0.0500,"BRK-B":0.0700},
-            "2022-11-14": {"MU":0.4000,"BAC":0.2200,"GOOG":0.1400,"GOOGL":0.1000,"AAPL":0.0600,"BRK-B":0.0800},
-            "2023-02-14": {"MU":0.2500,"BAC":0.1900,"GOOGL":0.2400,"GOOG":0.1700,"AAPL":0.0600,"BRK-B":0.0900},
-            "2023-05-15": {"BAC":0.2900,"GOOGL":0.2300,"GOOG":0.1700,"MU":0.1400,"EWBC":0.0800,"BRK-B":0.0500,"AAPL":0.0400},
-            "2023-08-14": {"BAC":0.3000,"GOOGL":0.2500,"GOOG":0.1800,"EWBC":0.1300,"BRK-B":0.0700,"AAPL":0.0700},
-            "2023-11-14": {"BAC":0.3000,"GOOGL":0.2500,"GOOG":0.1800,"EWBC":0.1300,"BRK-B":0.0700,"AAPL":0.0700},
-            "2024-02-14": {"BAC":0.3000,"GOOGL":0.2500,"GOOG":0.1800,"EWBC":0.1200,"BRK-B":0.0800,"AAPL":0.0700},
-            "2024-05-15": {"BAC":0.3000,"GOOGL":0.2500,"GOOG":0.1700,"EWBC":0.1200,"BRK-B":0.0800,"AAPL":0.0800},
-            "2024-08-14": {"BAC":0.2800,"GOOGL":0.2200,"GOOG":0.1600,"EWBC":0.1100,"BRK-B":0.0900,"OXY":0.0700,"AAPL":0.0700},
-            "2024-11-14": {"BAC":0.2800,"GOOGL":0.2200,"GOOG":0.1600,"EWBC":0.1100,"BRK-B":0.0900,"OXY":0.0700,"AAPL":0.0700},
-            "2025-02-14": {"BAC":0.2800,"GOOGL":0.2200,"GOOG":0.1600,"EWBC":0.1100,"BRK-B":0.0900,"OXY":0.0700,"AAPL":0.0700},
-            "2025-05-15": {"GOOGL":0.2400,"GOOG":0.2000,"BAC":0.1800,"PDD":0.1500,"BRK-B":0.1000,"EWBC":0.0900,"OXY":0.0500,"AAPL":0.0400},
-            "2025-08-14": {"GOOGL":0.2400,"GOOG":0.1600,"BAC":0.1400,"PDD":0.1800,"BRK-B":0.1100,"EWBC":0.1000,"OXY":0.0500,"AAPL":0.0200},
-            "2025-11-12": {"GOOGL":0.2331,"GOOG":0.2155,"BAC":0.1608,"PDD":0.1464,"BRK-B":0.1264,"EWBC":0.0874,"OXY":0.0169,"AAPL":0.0084,"SOC":0.0050},
-            "2026-02-18": {"GOOGL":0.2231,"GOOG":0.2155,"BAC":0.1608,"PDD":0.1464,"BRK-B":0.1264,"EWBC":0.0874,"OXY":0.0169,"CROX":0.0151,"AAPL":0.0084},
-        },
-        "Pershing Square (Ackman)": {
-            "2022-05-16": {"LOW":0.2600,"CMG":0.1900,"QSR":0.1600,"HLT":0.1500,"CP":0.1100,"GOOG":0.0400,"HHH":0.0500,"AAPL":0.0400},
-            "2022-08-15": {"LOW":0.2700,"CMG":0.2000,"QSR":0.1800,"HLT":0.1400,"CP":0.1100,"GOOG":0.0600,"HHH":0.0400},
-            "2022-11-14": {"LOW":0.2400,"CMG":0.1900,"QSR":0.1700,"HLT":0.1300,"CP":0.1000,"GOOG":0.0900,"GOOGL":0.0400,"HHH":0.0400},
-            "2023-02-14": {"LOW":0.2300,"CMG":0.2000,"QSR":0.1700,"HLT":0.1200,"CP":0.1100,"GOOG":0.1000,"GOOGL":0.0500,"HHH":0.0200},
-            "2023-05-15": {"CMG":0.2500,"QSR":0.2000,"HLT":0.1500,"GOOG":0.1500,"GOOGL":0.1000,"CP":0.1100,"HHH":0.0400},
-            "2023-08-14": {"CMG":0.2400,"QSR":0.1900,"HLT":0.1400,"GOOG":0.1600,"GOOGL":0.1100,"CP":0.1200,"HHH":0.0400},
-            "2023-11-14": {"CMG":0.2200,"QSR":0.1800,"GOOG":0.1500,"GOOGL":0.1300,"HLT":0.1200,"CP":0.1100,"UBER":0.0500,"HHH":0.0400},
-            "2024-02-14": {"CMG":0.2000,"QSR":0.1700,"GOOG":0.1500,"GOOGL":0.1300,"HLT":0.1200,"CP":0.1148,"UBER":0.0800,"HHH":0.0352},
-            "2024-05-15": {"QSR":0.1800,"GOOG":0.1700,"GOOGL":0.1400,"HLT":0.1300,"UBER":0.1500,"BN":0.1400,"CP":0.0900,"HHH":0.0200},
-            "2024-08-14": {"BN":0.1900,"UBER":0.1800,"QSR":0.1600,"GOOG":0.1500,"GOOGL":0.1200,"HLT":0.1100,"CP":0.0900,"HHH":0.0500},
-            "2024-11-14": {"UBER":0.2030,"BN":0.1920,"HHH":0.1060,"GOOG":0.1050,"QSR":0.1000,"AMZN":0.0870,"GOOGL":0.0800,"HLT":0.0540,"CP":0.0580,"SEG":0.0080,"HTZ":0.0070},
-            "2025-02-14": {"UBER":0.2100,"BN":0.2000,"GOOG":0.1300,"GOOGL":0.1200,"QSR":0.1100,"AMZN":0.1000,"HLT":0.0700,"HHH":0.0800,"SEG":0.0080,"HTZ":0.0070},
-            "2025-05-15": {"UBER":0.2000,"BN":0.1900,"AMZN":0.1400,"GOOG":0.1300,"GOOGL":0.1000,"QSR":0.1000,"HLT":0.0600,"HHH":0.0800},
-            "2025-08-14": {"UBER":0.2030,"BN":0.1920,"GOOG":0.1050,"QSR":0.1000,"AMZN":0.0870,"GOOGL":0.0800,"HHH":0.1060,"HLT":0.0540,"SEG":0.0080,"HTZ":0.0070,"CMG":0.0580},
-            "2025-11-14": {"UBER":0.2030,"BN":0.1920,"HHH":0.1060,"GOOG":0.1050,"QSR":0.1000,"AMZN":0.0870,"GOOGL":0.0800,"HLT":0.0540,"SEG":0.0080,"HTZ":0.0070},
-            "2026-02-17": {"BN":0.1815,"UBER":0.1590,"AMZN":0.1428,"GOOG":0.1246,"META":0.1137,"QSR":0.1005,"HHH":0.0969,"HLT":0.0560,"GOOGL":0.0137,"SEG":0.0064,"HTZ":0.0050},
-        },
-        "Berkshire Hathaway (Buffett)": {
-            "2022-05-16": {"AAPL":0.3800,"BAC":0.1400,"AXP":0.0800,"KO":0.0750,"CVX":0.0900,"OXY":0.0400,"KHC":0.0350,"MCO":0.0300,"USB":0.0200,"VRSN":0.0100},
-            "2022-08-15": {"AAPL":0.3800,"BAC":0.1400,"AXP":0.0800,"KO":0.0750,"CVX":0.0900,"OXY":0.0500,"KHC":0.0350,"MCO":0.0300},
-            "2022-11-14": {"AAPL":0.3900,"BAC":0.1300,"AXP":0.0800,"KO":0.0760,"CVX":0.0900,"OXY":0.0600,"KHC":0.0330,"MCO":0.0300},
-            "2023-02-14": {"AAPL":0.3800,"BAC":0.1300,"AXP":0.0790,"KO":0.0760,"CVX":0.0900,"OXY":0.0430,"KHC":0.0330,"MCO":0.0300},
-            "2023-05-15": {"AAPL":0.4644,"BAC":0.0909,"AXP":0.0769,"KO":0.0763,"CVX":0.0665,"OXY":0.0400,"KHC":0.0280,"MCO":0.0260},
-            "2023-08-14": {"AAPL":0.4800,"BAC":0.0900,"AXP":0.0750,"KO":0.0750,"CVX":0.0600,"OXY":0.0400,"KHC":0.0280,"MCO":0.0270},
-            "2023-11-14": {"AAPL":0.4800,"BAC":0.0900,"AXP":0.0780,"KO":0.0720,"CVX":0.0570,"OXY":0.0450,"KHC":0.0280,"MCO":0.0280,"CB":0.0120},
-            "2024-02-14": {"AAPL":0.4954,"BAC":0.0988,"AXP":0.0807,"KO":0.0670,"CVX":0.0534,"OXY":0.0450,"MCO":0.0320,"KHC":0.0280,"CB":0.0200},
-            "2024-05-15": {"AAPL":0.4100,"BAC":0.1000,"AXP":0.0820,"KO":0.0680,"CVX":0.0540,"OXY":0.0500,"CB":0.0600,"MCO":0.0330,"KHC":0.0280},
-            "2024-08-14": {"AAPL":0.3000,"BAC":0.1000,"AXP":0.0820,"KO":0.0700,"CVX":0.0550,"OXY":0.0510,"CB":0.0600,"MCO":0.0340,"KHC":0.0280},
-            "2024-11-14": {"AAPL":0.2600,"AXP":0.1500,"KO":0.1100,"BAC":0.1000,"CVX":0.0800,"OXY":0.0600,"CB":0.0500,"MCO":0.0380,"KHC":0.0280,"GOOGL":0.0240},
-            "2025-02-14": {"AAPL":0.2500,"AXP":0.1700,"KO":0.1100,"BAC":0.1000,"CVX":0.0800,"OXY":0.0600,"CB":0.0500,"MCO":0.0380,"GOOGL":0.0240,"KHC":0.0280},
-            "2025-05-15": {"AAPL":0.2400,"AXP":0.1800,"KO":0.1100,"BAC":0.0900,"CVX":0.0800,"OXY":0.0600,"CB":0.0500,"MCO":0.0380,"GOOGL":0.0240,"KHC":0.0280},
-            "2025-08-14": {"AAPL":0.2300,"AXP":0.1900,"KO":0.1150,"BAC":0.0950,"CVX":0.0800,"OXY":0.0580,"CB":0.0500,"MCO":0.0380,"GOOGL":0.0240,"KHC":0.0200},
-            "2025-11-14": {"AAPL":0.2300,"AXP":0.2046,"KO":0.1020,"BAC":0.1038,"CVX":0.0724,"OXY":0.0525,"MCO":0.0416,"CB":0.0416,"KHC":0.0288,"GOOGL":0.0204},
-            "2026-02-17": {"AAPL":0.2218,"AXP":0.1715,"KO":0.1163,"BAC":0.0937,"CVX":0.0905,"OXY":0.0525,"MCO":0.0416,"CB":0.0416,"KHC":0.0288,"GOOGL":0.0204},
-        },
-        "Pabrai Funds (Pabrai)": {
-            "2022-05-16": {"TDW":0.4000,"NVR":0.2500,"CEIX":0.2000,"ATIF":0.1500},
-            "2022-08-15": {"TDW":0.4500,"CEIX":0.2500,"NVR":0.2000,"ATIF":0.1000},
-            "2022-11-14": {"TDW":0.4500,"CEIX":0.3000,"NVR":0.1500,"ATIF":0.1000},
-            "2023-02-14": {"TDW":0.3500,"CEIX":0.3000,"HCC":0.1500,"NVR":0.1000,"AMR":0.0500},
-            "2023-05-15": {"TDW":0.2800,"CEIX":0.2500,"HCC":0.2000,"AMR":0.1500,"NVR":0.1200},
-            "2023-08-14": {"HCC":0.3500,"AMR":0.3000,"TDW":0.1500,"NE":0.1000,"NVR":0.1000},
-            "2023-11-14": {"HCC":0.3500,"AMR":0.3000,"TDW":0.1200,"NE":0.1200,"NVR":0.1100},
-            "2024-02-14": {"HCC":0.4000,"AMR":0.3000,"TDW":0.1000,"NE":0.1200,"NVR":0.0800},
-            "2024-05-15": {"HCC":0.3200,"AMR":0.3100,"RIG":0.1500,"NE":0.1200,"TDW":0.1000},
-            "2024-08-14": {"HCC":0.3500,"AMR":0.3000,"RIG":0.1500,"NE":0.1000,"VAL":0.1000},
-            "2024-11-14": {"HCC":0.3800,"AMR":0.2800,"RIG":0.1600,"NE":0.1100,"VAL":0.0700},
-            "2025-02-14": {"HCC":0.4000,"AMR":0.3000,"RIG":0.2000,"VAL":0.1000},
-            "2025-05-15": {"HCC":0.4000,"AMR":0.3000,"RIG":0.2000,"VAL":0.1000},
-            "2025-08-14": {"HCC":0.4000,"AMR":0.2900,"RIG":0.2100,"VAL":0.1000},
-            "2025-11-13": {"HCC":0.3500,"AMR":0.2800,"RIG":0.2100,"VAL":0.1000,"NE":0.0600},
-            "2026-02-13": {"HCC":0.3947,"RIG":0.2778,"AMR":0.2700,"VAL":0.0576},
-        },
-    }
-
     col1, col2 = st.columns([1, 2])
     with col1:
         selected_funds = st.multiselect("Select Funds",list(FUND_DATA.keys()),
@@ -157,64 +190,49 @@ with tab1:
     if not selected_funds:
         st.info("Select at least one fund.")
     else:
-        @st.cache_data(show_spinner="Fetching prices…")
-        def fetch_13f_prices():
-            tickers = {benchmark}
-            for snaps in FUND_DATA.values():
-                for s in snaps.values():
-                    tickers.update(s.keys())
-            return fetch_prices(list(tickers))
-
-        prices_13f = fetch_13f_prices()
-
         def run_backtest(snapshots, capital, start_yr):
-            # Only use filings from start_year onward
             filing_dates = sorted(
                 [pd.Timestamp(d) for d in snapshots if int(d[:4]) >= start_yr]
             )
             snaps_ts = {pd.Timestamp(d): normalize_weights(s)
                         for d, s in snapshots.items() if pd.Timestamp(d) in filing_dates}
 
-            bench_s = prices_13f.get(benchmark)
+            bench_s = ALL_PRICES.get(benchmark)
             if bench_s is None or len(filing_dates) == 0:
                 return pd.DataFrame()
 
-            # trading day index (Timestamps)
             idx = bench_s.index[bench_s.index >= filing_dates[0]]
-
-            cur_holdings = {}   # {ticker: shares}
+            cur_holdings = {}
             port_val = capital
             last_filed = None
             history = []
 
             for date in idx:
-                # Check if a new filing is available
                 due = [fd for fd in filing_dates if fd <= date and fd != last_filed]
                 if due:
                     fd = due[-1]
                     if fd != last_filed:
-                        pv = sum(sh * (get_px(t, date, prices_13f) or 0)
+                        pv = sum(sh * (get_px(t, date, ALL_PRICES) or 0)
                                  for t, sh in cur_holdings.items()) or port_val
                         cur_holdings = {}
                         for t, w in snaps_ts[fd].items():
-                            p = get_px(t, date, prices_13f)
+                            p = get_px(t, date, ALL_PRICES)
                             if p:
                                 cur_holdings[t] = (pv * w) / p
                         last_filed = fd
 
-                val = sum(sh * (get_px(t, date, prices_13f) or 0)
+                val = sum(sh * (get_px(t, date, ALL_PRICES) or 0)
                           for t, sh in cur_holdings.items())
                 history.append({"date": date, "value": val if val > 0 else port_val})
 
             return pd.DataFrame(history).set_index("date")
 
-        # Build chart
         COLORS = ["#2196F3","#4CAF50","#FF9800","#9C27B0"]
         fig = make_subplots(rows=2, cols=2,
             subplot_titles=["Portfolio Value","Drawdown","Total Return %",""],
             specs=[[{"colspan":2},None],[{},{}]])
 
-        bench_series = prices_13f[benchmark]
+        bench_series = ALL_PRICES[benchmark]
         bench_start  = bench_series[bench_series.index >= pd.Timestamp(f"{start_year}-01-01")]
         spy_norm     = (bench_series / float(bench_start.iloc[0])) * starting_capital
 
@@ -232,7 +250,6 @@ with tab1:
             dd         = (port_df["value"] - rm) / rm * 100
             max_dd     = float(dd.min())
 
-            # Align SPY to port index
             spy_aligned = spy_norm.reindex(port_df.index, method="ffill")
 
             label = fname.split("(")[0].strip()
@@ -253,11 +270,9 @@ with tab1:
                 "_color": color,
             })
 
-        # SPY on portfolio chart
         fig.add_trace(go.Scatter(x=spy_aligned.index, y=spy_aligned.values,
             name=benchmark, line=dict(color="#888888", width=2, dash="dash")), row=1, col=1)
 
-        # Return bar
         bench_ret_val = (float(bench_series.iloc[-1]) / float(bench_start.iloc[0]) - 1) * 100
         for row in summary_rows:
             fig.add_trace(go.Bar(x=[row["Fund"]], y=[row["_ret"]],
@@ -275,7 +290,6 @@ with tab1:
         disp = [{k:v for k,v in r.items() if not k.startswith("_")} for r in summary_rows]
         st.dataframe(pd.DataFrame(disp), use_container_width=True, hide_index=True)
 
-        # Current holdings
         st.subheader("Latest 13F Holdings")
         hcols = st.columns(len(selected_funds))
         for i, fname in enumerate(selected_funds):
@@ -295,30 +309,11 @@ with tab2:
     st.header("SeekingAlpha Top-10 Picks Backtest")
     st.caption("Equal-weight, buy first trading day of year, sell last trading day.")
 
-    SA_PICKS = {
-        2022: ["XOM","CI","FNF","BAC","BNTX","LYG"],
-        2023: ["SMCI","MOD","PDD","MNSO","JXN","ASC","VLO","HDSN","ENGIY"],
-        2024: ["APP","CLS","ANF","RYCEY","MOD","META","GCT","MHO","ISNPY","LPG"],
-        2025: ["CLS","OPFI","AGX","EAT","GCT","CRDO","NBIS","WLDN","DXPE","PTGX"],
-        2026: ["CLS","MU","AMD","CIEN","COHR","ALL","INCY","B","WLDN","ATI"],
-    }
-    YEAR_ENDS = {2022:"2022-12-30",2023:"2023-12-29",2024:"2024-12-31",
-                 2025:"2025-12-31",2026:"2026-03-11"}
-
     sel_years = st.multiselect("Select Years", list(SA_PICKS.keys()), default=list(SA_PICKS.keys()))
-
-    @st.cache_data(show_spinner="Fetching SA prices…")
-    def fetch_sa():
-        tickers = {benchmark}
-        for picks in SA_PICKS.values():
-            tickers.update(picks)
-        return fetch_prices(list(tickers))
-
-    sa_px = fetch_sa()
 
     annual = {}
     for yr in sel_years:
-        bench_s = sa_px.get(benchmark, pd.Series())
+        bench_s = ALL_PRICES.get(benchmark, pd.Series())
         start_ts = pd.Timestamp(f"{yr}-01-01")
         end_ts   = pd.Timestamp(YEAR_ENDS[yr])
         buy_candidates  = bench_s[bench_s.index >= start_ts]
@@ -330,13 +325,13 @@ with tab2:
 
         rets = {}
         for t in SA_PICKS[yr]:
-            p0 = get_px(t, buy_d, sa_px)
-            p1 = get_px(t, sell_d, sa_px)
+            p0 = get_px(t, buy_d, ALL_PRICES)
+            p1 = get_px(t, sell_d, ALL_PRICES)
             if p0 and p1:
                 rets[t] = p1/p0 - 1
 
-        sp0 = get_px(benchmark, buy_d, sa_px)
-        sp1 = get_px(benchmark, sell_d, sa_px)
+        sp0 = get_px(benchmark, buy_d, ALL_PRICES)
+        sp1 = get_px(benchmark, sell_d, ALL_PRICES)
         annual[yr] = {"returns": rets, "spy": sp1/sp0-1 if sp0 and sp1 else 0,
                       "buy": buy_d, "sell": sell_d}
 
@@ -348,7 +343,6 @@ with tab2:
                 st.metric(f"{yr}{' YTD' if yr==2026 else ''}",
                           f"{pr:+.1%}", delta=f"α {pr-data['spy']:+.1%}")
 
-        # Heatmap
         all_t = sorted({t for d in annual.values() for t in d["returns"]})
         heat_df = pd.DataFrame(
             {str(yr): {t: annual[yr]["returns"].get(t, np.nan)*100 for t in all_t}
@@ -359,7 +353,6 @@ with tab2:
         fig_h.update_layout(template="plotly_dark", height=450)
         st.plotly_chart(fig_h, use_container_width=True)
 
-        # Annual bar
         yrs   = list(annual.keys())
         prets = [np.mean(list(annual[y]["returns"].values()))*100 for y in yrs]
         srets = [annual[y]["spy"]*100 for y in yrs]
@@ -372,7 +365,6 @@ with tab2:
                             yaxis_ticksuffix="%", title="Annual Return vs SPY")
         st.plotly_chart(fig_b, use_container_width=True)
 
-        # Cumulative
         cum_p = cum_s = starting_capital
         for yr, data in annual.items():
             pr = np.mean(list(data["returns"].values())) if data["returns"] else 0
@@ -407,18 +399,27 @@ with tab3:
     t_list = [t.strip().upper() for t in ticker_in.split(",") if t.strip()]
 
     if t_list:
-        @st.cache_data(show_spinner="Loading…", ttl=300)
-        def fetch_research(tickers, per):
-            # period-based lookups: convert to start/end dates for cache
-            from datetime import timedelta
-            period_map = {"6mo": 180, "1y": 365, "2y": 730, "3y": 1095, "5y": 1825}
-            days = period_map.get(per, 365)
-            end_dt = datetime.today()
-            start_dt = end_dt - timedelta(days=days)
-            return fetch_prices(tickers, start=start_dt.strftime("%Y-%m-%d"),
-                                end=end_dt.strftime("%Y-%m-%d"))
+        # For tickers already in master cache, use it; for new ones, fetch on demand
+        period_map = {"6mo": 180, "1y": 365, "2y": 730, "3y": 1095, "5y": 1825}
+        days = period_map.get(period, 365)
+        end_dt = datetime.today()
+        start_dt = end_dt - timedelta(days=days)
+        cutoff = pd.Timestamp(start_dt)
 
-        res_px = fetch_research(t_list, period)
+        res_px = {}
+        missing = []
+        for t in t_list:
+            if t in ALL_PRICES:
+                s = ALL_PRICES[t]
+                res_px[t] = s[s.index >= cutoff]
+            else:
+                missing.append(t)
+
+        if missing:
+            extra = fetch_prices_cached(missing, start=start_dt.strftime("%Y-%m-%d"),
+                                        end=end_dt.strftime("%Y-%m-%d"))
+            res_px.update(extra)
+
         fig_p  = go.Figure()
         for t, s in res_px.items():
             if chart_type == "Line":
@@ -426,11 +427,6 @@ with tab3:
             elif chart_type == "Area":
                 fig_p.add_trace(go.Scatter(x=s.index, y=s, name=t, fill="tozeroy"))
             elif chart_type == "Candlestick" and len(t_list)==1:
-                from datetime import timedelta
-                period_map = {"6mo": 180, "1y": 365, "2y": 730, "3y": 1095, "5y": 1825}
-                days = period_map.get(period, 365)
-                end_dt = datetime.today()
-                start_dt = end_dt - timedelta(days=days)
                 raw2 = fetch_ohlc_cached(t_list[0], start_dt.strftime("%Y-%m-%d"),
                                          end_dt.strftime("%Y-%m-%d"))
                 if not raw2.empty:
@@ -443,8 +439,9 @@ with tab3:
         if len(t_list) > 1:
             fig_n = go.Figure()
             for t, s in res_px.items():
-                norm = (s / s.iloc[0] - 1) * 100
-                fig_n.add_trace(go.Scatter(x=norm.index, y=norm, name=t))
+                if len(s) > 0:
+                    norm = (s / s.iloc[0] - 1) * 100
+                    fig_n.add_trace(go.Scatter(x=norm.index, y=norm, name=t))
             fig_n.update_layout(template="plotly_dark", height=300,
                                 title="Normalized Return (%)", yaxis_ticksuffix="%")
             st.plotly_chart(fig_n, use_container_width=True)
@@ -495,12 +492,24 @@ with tab4:
         if ct:
             tw = sum(cw); cw = [w/tw for w in cw]
             with st.spinner("Running…"):
-                cpx = fetch_prices(ct + [benchmark],
-                                   start=cs.strftime("%Y-%m-%d"),
-                                   end=ce.strftime("%Y-%m-%d"))
+                # Use master cache for known tickers, fetch only truly new ones
+                cpx = {}
+                need_fetch = []
+                for t in ct + [benchmark]:
+                    if t in ALL_PRICES:
+                        cpx[t] = ALL_PRICES[t]
+                    else:
+                        need_fetch.append(t)
+                if need_fetch:
+                    cpx.update(fetch_prices_cached(need_fetch,
+                               start=cs.strftime("%Y-%m-%d"),
+                               end=ce.strftime("%Y-%m-%d")))
+
                 if benchmark in cpx and ct:
-                    idx = cpx[benchmark].index
-                    allocs = {t: (starting_capital*w)/float(cpx[t].iloc[0])
+                    b_s = cpx[benchmark]
+                    start_ts = pd.Timestamp(cs)
+                    idx = b_s.index[b_s.index >= start_ts]
+                    allocs = {t: (starting_capital*w)/float(cpx[t][cpx[t].index >= start_ts].iloc[0])
                               for t,w in zip(ct,cw) if t in cpx}
                     vals = []
                     for d in idx:
@@ -508,7 +517,8 @@ with tab4:
                                 for t,sh in allocs.items())
                         vals.append(v)
                     port_s  = pd.Series(vals, index=idx)
-                    bench_s = (cpx[benchmark]/cpx[benchmark].iloc[0])*starting_capital
+                    bench_s_start = b_s[b_s.index >= start_ts]
+                    bench_s = (bench_s_start/bench_s_start.iloc[0])*starting_capital
 
                     fig_c = go.Figure()
                     fig_c.add_trace(go.Scatter(x=port_s.index, y=port_s,
@@ -563,16 +573,28 @@ with tab5:
 
                 if st.button("▶ Backtest", type="primary", key="up_run"):
                     with st.spinner("Running…"):
-                        upx = fetch_prices(t_up + [benchmark],
-                                           start=us.strftime("%Y-%m-%d"),
-                                           end=ue.strftime("%Y-%m-%d"))
+                        upx = {}
+                        need = []
+                        for t in t_up + [benchmark]:
+                            if t in ALL_PRICES:
+                                upx[t] = ALL_PRICES[t]
+                            else:
+                                need.append(t)
+                        if need:
+                            upx.update(fetch_prices_cached(need,
+                                       start=us.strftime("%Y-%m-%d"),
+                                       end=ue.strftime("%Y-%m-%d")))
+
                         vt = [t for t in t_up if t in upx]
-                        if vt:
-                            idx = upx[benchmark].index
-                            a2  = {t:(starting_capital/len(vt))/float(upx[t].iloc[0]) for t in vt}
+                        if vt and benchmark in upx:
+                            b_s = upx[benchmark]
+                            start_ts = pd.Timestamp(us)
+                            idx = b_s.index[b_s.index >= start_ts]
+                            a2  = {t:(starting_capital/len(vt))/float(upx[t][upx[t].index >= start_ts].iloc[0]) for t in vt}
                             v2  = [sum(sh*(get_px(t,d,upx) or 0) for t,sh in a2.items()) for d in idx]
                             p2  = pd.Series(v2, index=idx)
-                            b2  = (upx[benchmark]/upx[benchmark].iloc[0])*starting_capital
+                            b2_start = b_s[b_s.index >= start_ts]
+                            b2  = (b2_start/b2_start.iloc[0])*starting_capital
 
                             fig2 = go.Figure()
                             fig2.add_trace(go.Scatter(x=p2.index,y=p2,name="Uploaded",
